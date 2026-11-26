@@ -5,15 +5,20 @@ on:
     - cron: "0 0 * * 0"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  auto-package-update:
+  # composer は外部のコードを実行するので、このジョブには書き込みできる認証情報を置かない
+  update:
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Must be used to trigger workflow after push
-          token: ${{ secrets.ACCESS_TOKEN }}
+          persist-credentials: false
 
       - name: Copy .env
         run: php -r "copy('.env.ci', '.env');"
@@ -23,9 +28,49 @@ jobs:
       - name: Run composer update
         run: composer update && composer bump && composer update
 
-      - # commit only to core contributors who have repository access
-        uses: stefanzweifel/git-auto-commit-action@4a55954c782fc1ea30b9056cd3e7a2b40ca8887d # v7.2.0
+      - name: Export diff
+        id: diff
+        run: |
+          git status --short
+          git diff --binary -- composer.json composer.lock > "$RUNNER_TEMP/update.patch"
+          if [ -s "$RUNNER_TEMP/update.patch" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.diff.outputs.changed == 'true'
         with:
-          commit_message: "[ci] package-updates"
-          commit_author: "GitHub Action <actions@github.com>"
-          commit_user_email: "action@github.com"
+          name: update-patch
+          path: ${{ runner.temp }}/update.patch
+          retention-days: 1
+
+  # 差分を当てて push するだけ。外部のコードは実行しない
+  push:
+    needs: update
+    if: needs.update.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create app token
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # GITHUB_TOKEN の push では CI が動かないので App のトークンを使う
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: update-patch
+          path: ${{ runner.temp }}
+
+      - name: Commit and push
+        run: |
+          git apply --index --include=composer.json --include=composer.lock "$RUNNER_TEMP/update.patch"
+          git config user.name "GitHub Action"
+          git config user.email "actions@github.com"
+          git commit -m "[ci] package-updates"
+          git push

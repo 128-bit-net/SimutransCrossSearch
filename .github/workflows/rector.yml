@@ -5,16 +5,22 @@ on:
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+
 jobs:
+  # composer と Rector は外部のコードを実行するので、このジョブには書き込みできる認証情報を置かない
   rector:
     runs-on: ubuntu-latest
     if: github.event.pull_request.head.repo.full_name == github.repository
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+
     steps:
-      - if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Must be used to trigger workflow after push
-          token: ${{ secrets.ACCESS_TOKEN }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - uses: ./.github/actions/php
 
@@ -22,9 +28,55 @@ jobs:
 
       - run: vendor/bin/pint
 
-      - # commit only to core contributors who have repository access
-        uses: stefanzweifel/git-auto-commit-action@4a55954c782fc1ea30b9056cd3e7a2b40ca8887d # v7.2.0
+      - name: Export diff
+        id: diff
+        run: |
+          git diff --binary -- '*.php' > "$RUNNER_TEMP/rector.patch"
+          if [ -s "$RUNNER_TEMP/rector.patch" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.diff.outputs.changed == 'true'
         with:
-          commit_message: "[rector] Rector fixes"
-          commit_author: "GitHub Action <actions@github.com>"
-          commit_user_email: "action@github.com"
+          name: rector-patch
+          path: ${{ runner.temp }}/rector.patch
+          retention-days: 1
+
+  # 差分を当てて push するだけ。外部のコードは実行しない
+  push:
+    needs: rector
+    # Dependabot の実行には Actions の Secret が渡らないので push しない
+    if: needs.rector.outputs.changed == 'true' && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create app token
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rector-patch
+          path: ${{ runner.temp }}
+
+      - name: Commit and push
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ]; then
+            echo "::notice::ブランチが進んだので push しない（次の実行に任せる）"
+            exit 0
+          fi
+          git apply --index --include='*.php' "$RUNNER_TEMP/rector.patch"
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git commit -m "[rector] Rector fixes"
+          git push
