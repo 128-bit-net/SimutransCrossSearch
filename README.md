@@ -34,7 +34,7 @@ Simutrans のアドオンや Mod 情報を複数のサイトから収集し、�
 ### 1. リポジトリのクローン
 
 ```bash
-git clone https://github.com/128na/SimutransCrossSearch.git
+git clone https://github.com/128-bit-net/SimutransCrossSearch.git
 cd SimutransCrossSearch
 ```
 
