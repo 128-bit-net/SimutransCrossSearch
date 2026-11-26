@@ -16,7 +16,7 @@
                     </li>
                     <li>
                         <a
-                            href="https://github.com/128na/SimutransCrossSearch"
+                            href="https://github.com/128-bit-net/SimutransCrossSearch"
                             target="_blank"
                             rel="noopener noreferrer"
                             class="block p-2 text-gray-700 dark:text-white"
