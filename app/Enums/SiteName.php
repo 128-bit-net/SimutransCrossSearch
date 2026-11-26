@@ -6,7 +6,7 @@ namespace App\Enums;
 
 enum SiteName: string
 {
-    case Japan    =    'japan';
+    case Japan = 'japan';
 
     case Twitrans = 'twitrans';
 
