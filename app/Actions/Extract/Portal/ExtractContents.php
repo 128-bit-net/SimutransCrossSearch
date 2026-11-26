@@ -57,7 +57,7 @@ final readonly class ExtractContents
     }
 
     /**
-     * @see https://github.com/128na/simutrans-portal/blob/master/database/seeders/CategorySeeder.php
+     * @see https://github.com/128-bit-net/simutrans-portal/blob/master/database/seeders/CategorySeeder.php
      *
      * @return array<PakSlug>
      */
